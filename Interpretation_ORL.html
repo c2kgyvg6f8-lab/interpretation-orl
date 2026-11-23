@@ -2595,7 +2595,7 @@ function slReport(R){
   if (R.P.length){ L.push('', 'PROPOSITIONS'); R.P.forEach(p => L.push('- ' + p)); }
   const dn = v('sl_devnote').trim();
   if (isJ) L.push('', 'Indices calculés par l\'analyse automatique des mouvements mandibulaires (Jawac), rapportés au temps de sommeil estimé.' + (dn ? ' ' + dn : ''));
-  else if (!isPSG) L.push('', 'Note technique : index rapportés à la durée validée, après exclusion des périodes d\'éveil et des signaux inexploitables. Le temps de sommeil et les micro-éveils corticaux ne sont pas mesurables en polygraphie.' + (dn ? ' ' + dn : ''));
+  else if (!isPSG) L.push('', 'Note technique : index rapportés à la durée validée (périodes d\'éveil et signaux inexploitables dévalidés). Le temps de sommeil et les micro-éveils corticaux ne sont pas mesurables en polygraphie.' + (dn ? ' ' + dn : ''));
   else if (dn) L.push('', 'Note technique : ' + dn);
   return L.join('\n');
 }
@@ -2883,7 +2883,7 @@ function analyse(rec, opt){
     for (let i = t1; i < t2; i++) if ((needSpO2 && !isFinite(spo2[i])) || MOV[i]) V[i] = 0;
     if (periods === 'own+dev' && cidVal) for (let i = 0; i < N; i++) if (!VC[i]) V[i] = 0;
   }
-  const A = new Uint8Array(N); for (let i = 0; i < N; i++) A[i] = V[i] && !FL[i] ? 1 : 0;
+  const A = new Uint8Array(N); for (let i = 0; i < N; i++) A[i] = V[i] && (hasVal || !FL[i]) ? 1 : 0; // périodes validées à la main : aucune exclusion automatique
   const vEnv = []; for (let i = 0; i < N; i += 4) if (V[i] && SEN[i] === 1) vEnv.push(env1[i]);
   // ---- base : 90e percentile de l'enveloppe des 120 s précédentes (meilleures respirations), par capteur ; rapport lissé 3 s
   function ratioOf(e){ const B = new Float32Array(N).fill(NaN); const step = 5*FS, win = 120*FS;
@@ -3074,7 +3074,7 @@ function analyse(rec, opt){
   if (flat.length){
     const fv = flat.map(([a, b]) => { let m = 0; for (let i = a; i < b; i++) if (cidVal ? VC[i] : V[i]) m++; return { t: a/FS, d: (b-a)/FS, valid: m/FS }; });
     const inValid = fv.filter(x => x.valid > 60);
-    if (inValid.length) warn.push(`Perte du signal de débit nasal ${cidVal ? "dans des périodes retenues par l'appareil" : 'pendant la nuit'} : ${inValid.slice(0, 6).map(x => `${clock(H, x.t)} (${Math.round(x.valid/60)} min)`).join(', ')}${inValid.length > 6 ? '…' : ''}. ${alt ? 'Relais par la somme RIP quand elle est exploitable, sinon période exclue.' : 'Exclue de mon analyse.'}`);
+    if (inValid.length) warn.push(`Perte du signal de débit nasal ${cidVal ? "dans des périodes retenues par l'appareil" : 'pendant la nuit'} : ${inValid.slice(0, 6).map(x => `${clock(H, x.t)} (${Math.round(x.valid/60)} min)`).join(', ')}${inValid.length > 6 ? '…' : ''}. ${hasVal ? 'Période validée : à dévalider si le signal est inexploitable.' : alt ? 'Relais par la somme RIP quand elle est exploitable, sinon période exclue.' : 'Exclue de mon analyse.'}`);
   }
   const hoursVC = VC.reduce((s, v) => s + v, 0) / FS / 3600;
   let both = 0, onlyMine = 0, onlyC = 0; for (let i = 0; i < N; i++){ if (A[i] && VC[i]) both++; else if (A[i]) onlyMine++; else if (VC[i] && !FL[i]) onlyC++; }
@@ -3118,7 +3118,7 @@ $('tab-edf').innerHTML = `
   <div id="edf_drop" class="edfdrop">Glissez ici l'export <b>.edf</b> (Cidelec), l'archive <b>.apiosZIP</b> (Jawac / Nomics) ou les fichiers .edf + .mk3, ou <b>cliquez pour choisir</b>
     <input type="file" id="edf_file" accept=".edf,.mk3,.apiosZIP,.zip,.ApiosPatientData" multiple hidden><div id="edf_log" class="note"></div></div>
   <div class="grid3" style="margin-top:10px">
-    <label class="f">Périodes analysées<select id="edf_val"><option value="own">déterminées par le logiciel (qualité des signaux)</option><option value="owndev">mes périodes, limitées au sommeil estimé par l'appareil</option><option value="dev">périodes retenues par l'appareil</option></select></label>
+    <label class="f">Périodes analysées<select id="edf_val"><option value="own">déterminées par le logiciel (qualité des signaux)</option><option value="owndev">mes périodes, limitées au sommeil estimé par l'appareil</option><option value="dev">périodes validées dans le logiciel de l'appareil (exclusions faites par le médecin)</option></select></label>
     <label class="f" style="justify-content:flex-end"><span><input type="checkbox" id="edf_child"> Enfant : règles AASM pédiatriques</span></label>
     <label class="f">Débit nasal<select id="edf_sqrt"><option value="1">pression linéarisée (racine carrée)</option><option value="0">pression brute</option></select></label>
     <label class="f">Hypopnée : désaturation associée ≥<select id="edf_des"><option value="3">3 % (AASM recommandé)</option><option value="4">4 % (AASM accepté)</option></select></label>
@@ -3209,7 +3209,7 @@ async function loadFiles(list){
     let age = patientAge();
     if (PAT && PAT.BirthDate && H.start){ const [d, m, y] = PAT.BirthDate.split('-').map(Number); age = (H.start - new Date(y, m - 1, d)) / 3.156e10; }
     $('edf_child').checked = (PAT && PAT.Children === '1') || (age != null && age < 13);
-    $('edf_val').value = REC.annotations.some(a => a.text === "Zone d'exclusion") ? 'owndev' : 'own';
+    $('edf_val').value = REC.annotations.some(a => /^(validated|invalidated|zone d'exclusion)$/i.test(a.text.trim())) ? 'dev' : 'own';
     view.chans = null; run();
     window.__mods && window.__mods.showTab && window.__mods.showTab('edf');
   } catch(e){ console.error(e); $('edf_log').textContent = '✗ ' + e.message; $('edf_tag').textContent = 'erreur'; $('edf_tag').className = 'tag warn'; }
@@ -3282,6 +3282,7 @@ function flags(){
   if (K.douteux) F.push(['warn', `${K.douteux} arrêt(s) du débit non coté(s) car probablement artefactuel(s) (canule seule, ou arrêt prolongé sans désaturation) : voir la liste à relire.`]);
   // 2. période analysée
   if (own && R.CV){ const v = R.VCMP; if (Math.abs(v.hoursVC - R.hours) > 0.25 || v.onlyMine > 0.25 || v.onlyC > 0.25) F.push(['warn', `Période analysée différente : ${f1(R.hours,1)} h pour moi${v.win ? ` (${E.clock(R.H, v.win[0]).slice(0,5)} – ${E.clock(R.H, v.win[1]).slice(0,5)})` : ''}, ${f1(v.hoursVC,1)} h retenues par ${DEV}. ${v.onlyMine > 0.1 ? `${f1(v.onlyMine,1)} h que j'analyse ont été exclues par ${DEV} (éveil ? Sans EEG je ne peux pas exclure l'éveil). ` : ''}${v.onlyC > 0.1 ? `${f1(v.onlyC,1)} h retenues par ${DEV} sont exclues chez moi (signal absent ou mouvements).` : ''}`]); }
+  if (R.hasVal) F.push(['ok', `Analyse limitée aux périodes validées dans ${DEV} (${f1(R.hours, 2)} h) : aucune exclusion automatique.`]);
   R.warn.forEach(w => F.push(['bad', w]));
   if (R.cInFlat.length) F.push([DEV === 'Nomics' ? 'warn' : 'bad', `${R.cInFlat.length} évènement(s) coté(s) par ${DEV} pendant une perte du signal de débit (${R.cInFlat.slice(0,4).map(a => a.text + ' à ' + E.clock(R.H, a.onset)).join(', ')}${R.cInFlat.length > 4 ? '…' : ''}) : ${DEV === 'Nomics' ? 'détectés à la mâchoire, non vérifiables sur le débit' : 'artefacts probables'}.`]);
   if (own && R.VCMP.win){ const end = R.VCMP.win[1], ce = R.VC.lastIndexOf(1) / FS; if (ce - end > 600) F.push(['warn', `Je termine l'analyse à ${E.clock(R.H, end).slice(0,5)} (canule ou oxymètre ensuite inexploitables) alors que ${DEV} valide jusqu'à ${E.clock(R.H, ce).slice(0,5)}.`]); }
@@ -3326,7 +3327,7 @@ function transfer(src){
   set('duree', String(Math.round(R.hoursTot*60))); set('dval', String(Math.round(R.hours*60)));
   if (DEV !== 'Nomics'){ ['tst','hdeb','hfin'].forEach(k => { const e = $('sl_' + k); if (e) e.value = ''; }); }
   if (src !== 'C'){ if (K.hasPulse){ set('iind', nf(K.iind)); set('rdi', nf(K.ier)); } set('flim', K.flim == null ? '' : String(Math.round(K.flim))); }
-  { const CC = R.CV || R.C, hh = R.CV ? R.CV.hours : R.hours; set('devnote', `${DEV} : IAH ${nf(CC.iah)}/h${R.CV ? `, calculé sur ${Math.floor(hh)} h ${String(Math.round(hh*60)%60).padStart(2,'0')} retenues par l'appareil` : ' sur les mêmes périodes'}${K.idevInd ? ` ; indicateurs autonomes ${nf(K.idevInd)}/h` : ''}.`); }
+  { const CC = R.CV || R.C, hh = R.CV ? R.CV.hours : R.hours; set('devnote', `${DEV} : IAH ${nf(CC.iah)}/h${R.hasVal || !R.CV ? ' sur les mêmes périodes' : `, calculé sur ${Math.floor(hh)} h ${String(Math.round(hh*60)%60).padStart(2,'0')} retenues par l'appareil`}${K.idevInd ? ` ; indicateurs autonomes ${nf(K.idevInd)}/h` : ''}.`); }
   if (src === 'C'){ set('iah', nf(C.iah)); set('ia', nf(C.ia)); set('ih', nf(C.ih)); set('iac', nf(C.centrales / R.hours)); set('odi', nf(C.ido)); }
   else { set('iah', nf(K.iah)); set('ia', nf(K.ia)); set('ih', nf(K.ih)); if (R.effSrc.length) set('iac', nf(K.centrales / R.hours)); else ['iac','iao','iam'].forEach(k => { const e = $('sl_' + k); if (e) e.value = ''; }); set('odi', nf(K.ido)); set('crit', String(R.opt.desat)); }
   set('odic', '3'); set('smoy', nf(R.OX.moy)); set('smin', nf(R.OX.min)); set('t90', nf(R.OX.t90));

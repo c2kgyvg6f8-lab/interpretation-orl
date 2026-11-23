@@ -1,13 +1,12 @@
 # Historique
 
 ## 2026-11-23 – Polygraphie : exclusion de l'éveil, durée validée, indicateurs autonomes
-- **Éveil exclu de l'analyse** (sans EEG), par époques de 30 s. Un épisode d'éveil est retenu en cas de :
+- **Périodes analysées = périodes validées par le médecin.** Quand l'export EDF contient des périodes validées ou dévalidées (Cidelec, ou zones d'exclusion Jawac), elles sont la seule base d'analyse et le logiciel n'exclut rien de lui-même. Les pertes de signal situées dans une période validée sont signalées, pour être dévalidées si besoin.
+- **Exclusion automatique de l'éveil, en dernier recours seulement** (export sans périodes validées), par époques de 30 s. Un épisode d'éveil est retenu en cas de :
   - lumière allumée au moins 10 s ;
   - position debout ;
   - mouvements d'au moins 10 s sur deux époques consécutives.
-
-  Les épisodes séparés de moins de 2 min sont fusionnés. L'analyse commence à l'extinction de la lumière, et non plus dès que les signaux sont présents.
-- **Pertes d'oxymétrie** exclues avec une marge de 5 s.
+- **Pertes d'oxymétrie** retirées du calcul de l'oxymétrie, avec une marge de 5 s.
 - **Index** rapportés à la durée validée, et non plus à la durée d'enregistrement.
 - **Compte rendu de polygraphie :**
   - seulement les durées totales (enregistrement, durée validée), sans heures ;
