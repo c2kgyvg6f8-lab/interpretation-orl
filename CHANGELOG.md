@@ -8,6 +8,7 @@
   - position debout ;
   - mouvements d'au moins 10 s sur deux époques consécutives.
 - **Pertes d'oxymétrie** retirées du calcul de l'oxymétrie, avec une marge de 5 s.
+- **Hypopnées mesurées sur la pression nasale brute, comme Cidelec** (la linéarisation par racine carrée reste disponible dans l'onglet Courbes).
 - **Index** rapportés à la durée validée, et non plus à la durée d'enregistrement.
 - **Compte rendu de polygraphie :**
   - seulement les durées totales (enregistrement, durée validée), sans heures ;

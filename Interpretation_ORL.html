@@ -2794,7 +2794,7 @@ const AH = new Set(['A','AO','AC','AM','H','HC']);
 
 // ---------------------------------------------------------------- analyse
 function analyse(rec, opt){
-  opt = Object.assign({ qMin:0.3, child:false, flatRef:0.05, hypo:0.70, apnea:0.10, minDur:10, desat:3, desatMin:3, desatWin:60, maxEv:120, flatFrac:0.08, flatMin:120, useValidated:false, sqrt:true, basePct:90, arousal:'auto', arWin:5, wakeAct:10, wakeGap:120, spo2Margin:5, indRise:5, indWin:15, plethDrop:0.3, flatIdx:0.65 }, opt || {});
+  opt = Object.assign({ qMin:0.3, child:false, flatRef:0.05, hypo:0.70, apnea:0.10, minDur:10, desat:3, desatMin:3, desatWin:60, maxEv:120, flatFrac:0.08, flatMin:120, useValidated:false, sqrt:false, basePct:90, arousal:'auto', arWin:5, wakeAct:10, wakeGap:120, spo2Margin:5, indRise:5, indWin:15, plethDrop:0.3, flatIdx:0.65 }, opt || {});
   const H = rec.header, ch = channels(rec), warn = [];
   if (!ch.flow) throw new Error('voie de débit non trouvée');
   const N = Math.floor(H.duration * FS);
@@ -3126,7 +3126,7 @@ $('tab-edf').innerHTML = `
   <div class="grid3" style="margin-top:10px">
     <label class="f">Périodes analysées<select id="edf_val"><option value="own">déterminées par le logiciel (qualité des signaux)</option><option value="owndev">mes périodes, limitées au sommeil estimé par l'appareil</option><option value="dev">périodes validées dans le logiciel de l'appareil (exclusions faites par le médecin)</option></select></label>
     <label class="f" style="justify-content:flex-end"><span><input type="checkbox" id="edf_child"> Enfant : règles AASM pédiatriques</span></label>
-    <label class="f">Débit nasal<select id="edf_sqrt"><option value="1">pression linéarisée (racine carrée)</option><option value="0">pression brute</option></select></label>
+    <label class="f">Débit nasal<select id="edf_sqrt"><option value="0" selected>pression brute (comme Cidelec)</option><option value="1">pression linéarisée (racine carrée)</option></select></label>
     <label class="f">Hypopnée : désaturation associée ≥<select id="edf_des"><option value="3">3 % (AASM recommandé)</option><option value="4">4 % (AASM accepté)</option></select></label>
     <label class="f">Baisse de débit pour une hypopnée ≥<select id="edf_hyp"><option value="0.70">30 %</option><option value="0.50">50 %</option></select></label>
     <label class="f" style="justify-content:flex-end"><button id="edf_run">Relancer l'analyse</button></label>
