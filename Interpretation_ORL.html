@@ -2385,10 +2385,10 @@ function slInterpret(){
   const csr = N('csr'); if (csr) add(csr >= 10 ? 'bad' : 'warn', `Respiration de Cheyne-Stokes sur ${fmt(csr,0)} % du temps : rechercher une insuffisance cardiaque.`);
   if (ck('sl_x_opio') && iac != null && iac >= T.ctrIdx) add('warn', 'Apnées centrales sous opioïdes : imputabilité médicamenteuse probable.');
   const pd = N('pdos'), iD = N('idos'), iN = N('indos');
-  R.pos = false; R.posX = false;
+  R.pos = false; R.posX = false; R.posShort = false;
   if (iD != null && iN != null && iD >= T.posRatio * Math.max(iN, 0.1) && iD >= T.sev1){
     if (pd == null || (pd >= T.posMin && pd <= 100 - T.posMin)){ R.pos = true; R.posX = iN < T.sev1; add('ok', `Composante positionnelle : IAH ${fmt(iD)}/h en décubitus dorsal contre ${fmt(iN)}/h hors dos${R.posX ? ' (normalisation hors dos)' : ''}.`); }
-    else add('warn', 'Profil positionnel suggéré mais temps trop court dans l\'une des positions.');
+    else { R.posShort = true; add('warn', 'Profil positionnel suggéré mais temps trop court dans l\'une des positions.'); }
   }
   if (pd != null && pd < T.posMin && iah != null && iah < T.sev2) add('warn', `Très peu de temps en décubitus dorsal (${fmt(pd,0)} %) : sévérité possiblement sous-estimée.`);
   R.rem = false;
@@ -2518,9 +2518,10 @@ function slNarr(R){
   if (!R.child && iD != null && iN != null){
     let q;
     if (R.pos) q = `Les évènements prédominent nettement sur le dos (${fmt(iD)}/h contre ${fmt(iN)}/h hors du dos) : composante positionnelle${R.posX ? ' exclusive' : ''}.`;
+    else if (R.posShort) q = `Les évènements prédominent sur le dos (${fmt(iD)}/h contre ${fmt(iN)}/h hors du dos), mais le temps passé ${pd != null && pd < 50 ? 'sur le dos' : 'hors du dos'} est trop court${pd != null ? ` (${fmt(pd < 50 ? pd : 100 - pd, 0)} %)` : ''} pour affirmer une composante positionnelle.`;
     else if (iD > 1.2*iN && iN >= T.sev1) q = `Les évènements sont plus nombreux sur le dos (${fmt(iD)}/h) mais restent à un niveau ${lab(iN)} hors du dos (${fmt(iN)}/h) : le trouble n'est pas positionnel.`;
     else q = `Pas de composante positionnelle (${fmt(iD)}/h sur le dos, ${fmt(iN)}/h hors du dos).`;
-    if (pd != null && pd < T.posMin) q += ` Le patient a peu dormi sur le dos (${fmt(pd,0)} %)${lab(iN) === lab(iah) ? ' : le résultat global ne sous-estime pas notablement la sévérité.' : ' : la sévérité est possiblement sous-estimée.'}`;
+    if (pd != null && pd < T.posMin && !R.posShort) q += ` Le patient a peu dormi sur le dos (${fmt(pd,0)} %)${lab(iN) === lab(iah) ? ' : le résultat global ne sous-estime pas notablement la sévérité.' : ' : la sévérité est possiblement sous-estimée.'}`;
     out.push(q);
   }
   return out;
@@ -2587,7 +2588,7 @@ function slReport(R){
     else if (R.insuff && iah < T.sev1) L.push(`- Examen techniquement insuffisant ne permettant pas d'éliminer un syndrome d'apnées du sommeil (${R.src} ${fmt(iah)}/h).`);
     else if (iah < T.sev1) L.push(`- Absence de syndrome d'apnées-hypopnées du sommeil significatif (${R.src} ${fmt(iah)}/h).`);
     else if (R.central) L.push(`- Syndrome d'apnées du sommeil ${R.sev} à prédominance centrale (${R.src} ${fmt(iah)}/${b}).`);
-    else L.push(`- Syndrome d'apnées-hypopnées obstructives du sommeil ${R.sev} (${R.src} ${fmt(iah)}/${b})${N('iac') != null && N('iac') >= T.ctrIdx ? ', avec composante centrale' : ''}${R.pos ? ', à composante positionnelle' + (R.posX ? ' exclusive' : '') : (N('idos') != null && N('indos') != null ? ', non positionnel' : '')}${R.rem ? ', prédominant en sommeil paradoxal' : ''}.`);
+    else L.push(`- Syndrome d'apnées-hypopnées obstructives du sommeil ${R.sev} (${R.src} ${fmt(iah)}/${b})${N('iac') != null && N('iac') >= T.ctrIdx ? ', avec composante centrale' : ''}${R.pos ? ', à composante positionnelle' + (R.posX ? ' exclusive' : '') : (N('idos') != null && N('indos') != null && !R.posShort ? ', non positionnel' : '')}${R.rem ? ', prédominant en sommeil paradoxal' : ''}.`);
     if (N('csr')) L.push(`- Respiration de Cheyne-Stokes (${fmt(N('csr'),0)} % du temps).`);
     if (R.hyp) L.push(`- Hypoxémie nocturne ${R.hyp === 'sev' ? 'sévère' : 'significative'} (T90 ${fmt(N('t90'))} %).`);
     if (isPSG && N('plmi') > T.plmi) L.push(`- Mouvements périodiques des jambes au cours du sommeil (${fmt(N('plmi'))}/h).`);
@@ -2778,7 +2779,7 @@ function annClass(t){
   if (/apn/.test(x)) return 'A';
   if (/desat/.test(x)) return 'DES';
   if (/snore|ronfl/.test(x)) return 'SN';
-  if (/indicat|autonom|\bptt\b/.test(x)) return 'IND';
+  if (/^nci$|indicat|autonom|\bptt\b/.test(x)) return 'IND';
   if (/arousal|micro.?[ée]veil/.test(x)) return 'AR';
   if (/limb|jambe|plm/.test(x)) return 'LM';
   if (/supine|dorsal|\bdos\b/.test(x)) return 'P_dos';
@@ -2840,7 +2841,10 @@ function analyse(rec, opt){
   // ---- éveil (sans EEG) par époques de 30 s : lumière allumée ≥ 10 s, position debout,
   //      ou mouvements ≥ wakeAct s sur 2 époques consécutives ; épisodes séparés de < wakeGap s fusionnés
   const MOV = new Uint8Array(N), WK = { act:false, light:false, pos:false };
-  { const E30 = 30*FS, ne = Math.ceil(N / E30), w = new Uint8Array(ne), mv = new Float32Array(ne);
+  const isPSGrec = rec.signals.some(sg => /\beeg\b|\beog\b|\bemg\b|^(c3|c4|o1|o2|f3|f4|e1|e2|m1|m2)\b|chin|menton|hypno/i.test(sg.label));
+  if (isPSGrec){ const act = rec.signals.find(sg => /actim|activit|movement|mouvement/i.test(sg.label));
+    if (act){ const a4 = toRate(act.data, act.fs, FS); for (let e0 = 0; e0 < N; e0 += 30*FS){ let m = 0, n = 0; for (let i = e0; i < Math.min(N, e0 + 30*FS); i++){ n++; if (a4[i] > 0.5) m++; } if (n && m / n > 0.5) for (let i = e0; i < Math.min(N, e0 + 30*FS); i++) MOV[i] = 1; } } }
+  else { const E30 = 30*FS, ne = Math.ceil(N / E30), w = new Uint8Array(ne), mv = new Float32Array(ne);
     const act = rec.signals.find(sg => /actim|activit|movement|mouvement/i.test(sg.label));
     if (act){ WK.act = true; const a4 = toRate(act.data, act.fs, FS); const smp = []; for (let i = 0; i < a4.length; i += 7) smp.push(a4[i]);
       const p50 = pct(smp, 50), p99 = pct(smp, 99.5), thr = p99 <= 1.5 ? 0.5 : p50 + 0.25*(p99 - p50);
@@ -2915,14 +2919,16 @@ function analyse(rec, opt){
   const hasDesat = (o, d) => DS.some(q => q.t >= o - 2 && q.t <= o + d + 30);
   // ---- indicateurs non corticaux d'éveil : accélération du pouls ≥ indRise /min (sur ≥ 3 s) par rapport aux 10 s précédentes
   const IND = [];
-  if (ch.pulse){ const hr = toRate(ch.pulse.data, ch.pulse.fs, FS); const okh = x => isFinite(x) && x > 25 && x < 220; let last = -1e9;
+  const devI = ann.filter(a => a.cls === 'IND').map(a => a.onset).sort((a, b) => a - b); // indicateurs de l'appareil (NCI Cidelec) en priorité
+  if (devI.length) IND.push(...devI);
+  else if (ch.pulse){ const hr = toRate(ch.pulse.data, ch.pulse.fs, FS); const okh = x => isFinite(x) && x > 25 && x < 220; let last = -1e9;
     for (let i = 12*FS; i < N - 10*FS; i += 2){
       if (!A[i] || i - last < opt.indWin*FS) continue;
       const b = []; for (let j = i - 12*FS; j < i - 2*FS; j++) if (okh(hr[j])) b.push(hr[j]); if (b.length < 6*FS) continue;
       const base = pct(b, 50); let up = 0, bad = false; for (let j = i; j < i + 10*FS; j++){ if (!okh(hr[j])) { bad = true; break; } if (hr[j] >= base + opt.indRise) up++; }
       if (!bad && up >= 3*FS && hr[i] >= base + opt.indRise){ IND.push(i / FS); last = i; } } }
   // baisse d'amplitude de l'onde de pouls (vasoconstriction) ≥ plethDrop sur ≥ 3 s par rapport aux 10 s précédentes
-  if (ch.pleth){ const R16 = 16; let x = toRate(ch.pleth.data, ch.pleth.fs, R16); const M = movExt(x, 2*R16, true), m = movExt(x, 2*R16, false); const am = new Float32Array(N);
+  if (!devI.length && ch.pleth){ const R16 = 16; let x = toRate(ch.pleth.data, ch.pleth.fs, R16); const M = movExt(x, 2*R16, true), m = movExt(x, 2*R16, false); const am = new Float32Array(N);
     for (let i = 0; i < N; i++){ let s = 0, n = 0; for (let k = i*4; k < Math.min(x.length, i*4 + 4); k++){ s += M[k] - m[k]; n++; } am[i] = n ? s / n : NaN; }
     let last = -1e9; const pl = [];
     for (let i = 12*FS; i < N - 10*FS; i += 2){
@@ -3023,7 +3029,7 @@ function analyse(rec, opt){
     K.dev = { hours: hS, iah: (ap + hy) / hS, oahi: (ap - ce + hy) / hS, apnees: ap, hypopnees: hy, centrales: ce, horsSommeil: EV.filter(e => ['A','AO','AC','AM','H'].includes(e.type) && !VC[Math.floor(e.t*FS)]).length }; }
   { const inA2 = t => { const i = Math.floor(t*FS); return i >= 0 && i < N && A[i]; };
     const ah = EV.filter(e => ['A','AO','AC','AM','H'].includes(e.type));
-    K.ind = IND.filter(inA2).length; K.iind = K.ind / hours; K.hasPulse = !!(ch.pulse || ch.pleth);
+    K.ind = IND.filter(inA2).length; K.iind = K.ind / hours; K.hasPulse = !!(ch.pulse || ch.pleth || devI.length); K.indSrc = devI.length ? 'appareil' : 'pouls';
     K.ahInd = ah.filter(e => hasInd(e.t, e.d)).length; K.pAhInd = ah.length ? K.ahInd / ah.length : null;
     K.devInd = ann.filter(a => a.cls === 'IND' && inA2(a.onset)).length; K.idevInd = K.devInd ? K.devInd / hours : null;
     K.redInd = EV.filter(e => e.type === 'R' && e.ind).length; K.iredInd = K.redInd / hours;
@@ -3209,7 +3215,8 @@ async function loadFiles(list){
     let age = patientAge();
     if (PAT && PAT.BirthDate && H.start){ const [d, m, y] = PAT.BirthDate.split('-').map(Number); age = (H.start - new Date(y, m - 1, d)) / 3.156e10; }
     $('edf_child').checked = (PAT && PAT.Children === '1') || (age != null && age < 13);
-    $('edf_val').value = REC.annotations.some(a => /^(validated|invalidated|zone d'exclusion)$/i.test(a.text.trim())) ? 'dev' : 'own';
+    const psgRec = REC.signals.some(s => /\beeg\b|\beog\b|\bemg\b|^(c3|c4|o1|o2|f3|f4|e1|e2|m1|m2)\b|chin|menton|hypno/i.test(s.label));
+    $('edf_val').value = !psgRec && REC.annotations.some(a => /^(validated|invalidated|zone d'exclusion)$/i.test(a.text.trim())) ? 'dev' : REC.annotations.some(a => a.text === "Zone d'exclusion") ? 'owndev' : 'own';
     view.chans = null; run();
     window.__mods && window.__mods.showTab && window.__mods.showTab('edf');
   } catch(e){ console.error(e); $('edf_log').textContent = '✗ ' + e.message; $('edf_tag').textContent = 'erreur'; $('edf_tag').className = 'tag warn'; }
@@ -3327,7 +3334,7 @@ function transfer(src){
   set('duree', String(Math.round(R.hoursTot*60))); set('dval', String(Math.round(R.hours*60)));
   if (DEV !== 'Nomics'){ ['tst','hdeb','hfin'].forEach(k => { const e = $('sl_' + k); if (e) e.value = ''; }); }
   if (src !== 'C'){ if (K.hasPulse){ set('iind', nf(K.iind)); set('rdi', nf(K.ier)); } set('flim', K.flim == null ? '' : String(Math.round(K.flim))); }
-  { const CC = R.CV || R.C, hh = R.CV ? R.CV.hours : R.hours; set('devnote', `${DEV} : IAH ${nf(CC.iah)}/h${R.hasVal || !R.CV ? ' sur les mêmes périodes' : `, calculé sur ${Math.floor(hh)} h ${String(Math.round(hh*60)%60).padStart(2,'0')} retenues par l'appareil`}${K.idevInd ? ` ; indicateurs autonomes ${nf(K.idevInd)}/h` : ''}.`); }
+  { const CC = R.CV || R.C, hh = R.CV ? R.CV.hours : R.hours; set('devnote', `${DEV} : IAH ${nf(CC.iah)}/h${R.hasVal || !R.CV ? ' sur les mêmes périodes' : `, calculé sur ${Math.floor(hh)} h ${String(Math.round(hh*60)%60).padStart(2,'0')} retenues par l'appareil`}${K.idevInd && K.indSrc !== 'appareil' ? ` ; indicateurs autonomes ${nf(K.idevInd)}/h` : ''}.`); }
   if (src === 'C'){ set('iah', nf(C.iah)); set('ia', nf(C.ia)); set('ih', nf(C.ih)); set('iac', nf(C.centrales / R.hours)); set('odi', nf(C.ido)); }
   else { set('iah', nf(K.iah)); set('ia', nf(K.ia)); set('ih', nf(K.ih)); if (R.effSrc.length) set('iac', nf(K.centrales / R.hours)); else ['iac','iao','iam'].forEach(k => { const e = $('sl_' + k); if (e) e.value = ''; }); set('odi', nf(K.ido)); set('crit', String(R.opt.desat)); }
   set('odic', '3'); set('smoy', nf(R.OX.moy)); set('smin', nf(R.OX.min)); set('t90', nf(R.OX.t90));
