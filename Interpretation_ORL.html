@@ -2178,7 +2178,8 @@ const RES = [
   {k:'ronfl',l:'Ronflement',u:'% du temps',ex:'PSJ',min:0,max:100,rx:['ronflements?','snoring']},
   {k:'fc',l:'Fréquence cardiaque moyenne',u:'/min',ex:'PSJ',min:25,max:200,rx:['frequence cardiaque moyenne','fc moy(enne)?','pouls moyen']},
   {k:'qual',l:'Qualité du tracé',sel:[['bonne','Bonne'],['moyenne','Moyenne (pertes de signal partielles)'],['mauvaise','Mauvaise']],ex:'PSJ'},
-  {k:'com',l:'Commentaire technique',t:'text',ex:'PSJ',wide:true}
+  {k:'com',l:'Commentaire technique',t:'text',ex:'PSJ',wide:true},
+  {k:'devnote',l:'Résultat de l\'appareil (affiché en note)',t:'text',ex:'PSJ',wide:true}
  ]},
  {g:'Évènements respiratoires', f:[
   {k:'iah',l:'IAH',u:'/h',ex:'PSJ',min:0,max:200,ph:true,rx:['index d\'apnees?[- ]?(et d\'?)?hypopnees?','indice d\'apnees?[- ]?(et d\'?)?hypopnees?','\\biah\\b','\\bahi\\b'],not:'^\\s*(en |\\()?(position |decubitus )?(dors|dos|lat|non|hors|ventr|sp\\b|rem|paradox|nrem|sl\\b|lent|resid|sous|obstr|centr)'},
@@ -2190,6 +2191,8 @@ const RES = [
   {k:'iam',l:'Index d\'apnées mixtes',u:'/h',ex:'PSJ',min:0,max:200,ph:true,rx:['apnees? mixtes?','\\biam\\b','mixed apnea']},
   {k:'rera',l:'Index de RERA / efforts avec éveil',u:'/h',ex:'SJ',min:0,max:200,ph:true,rx:['\\brera\\b','efforts? respiratoires? (avec|suivis? d\')? ?(micro-?)?eveil']},
   {k:'effort',l:'Temps en effort respiratoire',u:'%',ex:'J',min:0,max:100,rx:['(temps|%) (en |d\')?effort respiratoire','effort respiratoire','respiratory effort']},
+  {k:'iind',l:'Indicateurs autonomes d\'éveil (non corticaux)',u:'/h',ex:'PJ',min:0,max:300},
+  {k:'flim',l:'Limitation de débit inspiratoire',u:'% du temps',ex:'P',min:0,max:100},
   {k:'csr',l:'Respiration de Cheyne-Stokes',u:'% du temps',ex:'PSJ',min:0,max:100,rx:['cheyne[- ]?stokes','respiration periodique']},
   {k:'crit',l:'Critère des hypopnées',sel:[['','non précisé'],['3','≥ 30 % + désaturation ≥ 3 % ou micro-éveil (AASM 1A)'],['4','≥ 30 % + désaturation ≥ 4 % (AASM 1B)']],ex:'PSJ'}
  ]},
@@ -2368,7 +2371,7 @@ function slInterpret(){
   let iah = N('iah'), src = 'IAH';
   if (iah == null && N('rdi') != null){ iah = N('rdi'); src = isJ ? 'RDI' : 'IER'; }
   const iao = N('iao'), iac = N('iac'), iam = N('iam'), ia = N('ia');
-  R.iah = iah; R.src = src; R.base = isPSG ? 'heure de sommeil' : isJ ? 'heure de sommeil estimé' : 'heure d\'enregistrement';
+  R.iah = iah; R.src = src; R.base = isPSG ? 'heure de sommeil' : isJ ? 'heure de sommeil estimé' : 'heure de durée validée';
   const useD = (isPSG || isJ) ? (tst ?? dv ?? dur) : (dv ?? dur), minD = (isPSG || isJ) ? T.tstMin : T.pvMin;
   R.insuff = false;
   if (useD != null && useD < minD){ R.insuff = true; add('bad', `Durée ${isPSG ? 'de sommeil' : isJ ? 'de sommeil estimé' : 'de signal valide'} insuffisante (${hm(useD)} < ${hm(minD)}) : examen peu contributif, à renouveler s'il est négatif.`); }
@@ -2471,6 +2474,57 @@ function slInterpret(){
   }
   return { fl, R };
 }
+function slNarr(R){
+  const ex = exam(), isPSG = ex === 'psg_cidelec', isJ = ex === 'pv_jawac', T = SL_T, out = [], iah = R.iah;
+  if (iah == null) return out;
+  const lab = x => x < T.sev1 ? 'normal' : x < T.sev2 ? 'léger' : x < T.sev3 ? 'modéré' : 'sévère';
+  const pv = !isPSG && !isJ, dv = pv ? N('dval') : N('tst');
+  // 1. validité
+  if (dv != null) out.push(R.insuff ? `${pv ? 'Durée validée' : 'Temps de sommeil'} insuffisant${pv ? 'e' : ''} (${hm(dv)}) : résultats à interpréter avec prudence.` : `${isPSG ? 'Polysomnographie' : 'Polygraphie'} techniquement satisfaisante (${hm(dv)} ${pv ? 'de signal validé' : isJ ? 'de sommeil estimé' : 'de sommeil'}).`);
+  // 2. sévérité et nature des évènements
+  const ia = N('ia'), ih = N('ih'), iao = N('iao'), iac = N('iac'), iam = N('iam');
+  let t = R.sev === 'normal' ? `Pas de trouble respiratoire significatif (${R.src} ${fmt(iah)}/h).` : `Le trouble respiratoire est ${R.sev} (${R.src} ${fmt(iah)}/h).`;
+  if (R.sev !== 'normal' && ia != null && ih != null && ia + ih > 0){
+    const ph = Math.round(100*ih/(ia + ih));
+    const ob = iao != null && iao >= (iac || 0) + (iam || 0) ? ' et des apnées principalement obstructives' : '';
+    t += ph >= 60 ? ` Il associe surtout des hypopnées (${ph} % des évènements)${ob}.` : ph <= 40 ? ` Il est fait surtout d'apnées (${100 - ph} % des évènements)${ob ? ', principalement obstructives' : ''}.` : ` Il associe apnées et hypopnées en proportions voisines${ob}.`;
+    if (iac != null && !R.central && iac < T.ctrIdx) t += ' Les apnées centrales sont rares.';
+  }
+  out.push(t);
+  // 3. oxygénation
+  const odi = N('odi'), smin = N('smin'), t90 = N('t90');
+  if (odi != null){
+    const deep = (smin != null && smin < 80) || (t90 != null && t90 >= T.t90), fq = odi >= T.sev3 ? 'fréquentes' : odi >= T.sev2 ? 'assez fréquentes' : 'peu nombreuses';
+    const cj = deep ? (fq === 'peu nombreuses' ? ' mais profondes' : ' et profondes') : (fq === 'peu nombreuses' ? ' et peu profondes' : ' mais peu profondes');
+    const det = [smin != null ? `nadir ${fmt(smin,0)} %` : '', t90 != null ? `${fmt(t90)} % du temps sous 90 %` : ''].filter(Boolean).join(', ');
+    let o = `Les désaturations sont ${fq}${cj}${det ? ` (${det})` : ''}.`;
+    if (odi > 1.2*iah && odi - iah >= 5) o += ` L'index de désaturation (${fmt(odi)}/h) dépasse l'IAH : une partie des désaturations ne s'accompagne pas d'une baisse de débit suffisante pour être cotée.`;
+    out.push(o);
+  }
+  // 4. fragmentation (indicateurs non corticaux) et limitation de débit
+  if (!isPSG){
+    const ii = N('iind'), rdi = N('rdi'), fl = N('flim'), ph = [];
+    if (ii != null) ph.push(`les indicateurs autonomes d'éveil sont ${ii >= T.iae ? 'fréquents' : 'peu nombreux'} (${fmt(ii)}/h)`);
+    if (fl != null) ph.push(fl >= 10 ? `la limitation de débit inspiratoire est présente ${fmt(fl,0)} % du temps` : 'la limitation de débit inspiratoire est peu marquée');
+    if (ph.length){
+      let f = ph.join(', et ').replace(/^./, c => c.toUpperCase()) + '.';
+      if (rdi != null && rdi - iah >= 0.5) f += ` En ajoutant les baisses de débit suivies d'un indicateur autonome, l'index d'évènements respiratoires atteint ${fmt(rdi)}/h.`;
+      if (ii != null && ii >= T.iae) f += ' Le sommeil est probablement fragmenté.';
+      out.push(f);
+    }
+  }
+  // 5. position
+  const pd = N('pdos'), iD = N('idos'), iN = N('indos');
+  if (!R.child && iD != null && iN != null){
+    let q;
+    if (R.pos) q = `Les évènements prédominent nettement sur le dos (${fmt(iD)}/h contre ${fmt(iN)}/h hors du dos) : composante positionnelle${R.posX ? ' exclusive' : ''}.`;
+    else if (iD > 1.2*iN && iN >= T.sev1) q = `Les évènements sont plus nombreux sur le dos (${fmt(iD)}/h) mais restent à un niveau ${lab(iN)} hors du dos (${fmt(iN)}/h) : le trouble n'est pas positionnel.`;
+    else q = `Pas de composante positionnelle (${fmt(iD)}/h sur le dos, ${fmt(iN)}/h hors du dos).`;
+    if (pd != null && pd < T.posMin) q += ` Le patient a peu dormi sur le dos (${fmt(pd,0)} %)${lab(iN) === lab(iah) ? ' : le résultat global ne sous-estime pas notablement la sévérité.' : ' : la sévérité est possiblement sous-estimée.'}`;
+    out.push(q);
+  }
+  return out;
+}
 function slReport(R){
   const ex = exam(), isPSG = ex === 'psg_cidelec', isJ = ex === 'pv_jawac', T = SL_T, ctx = v('sl_ctx');
   const L = head(isPSG ? 'COMPTE RENDU DE POLYSOMNOGRAPHIE' : isJ ? 'COMPTE RENDU DE POLYGRAPHIE PAR ANALYSE DES MOUVEMENTS MANDIBULAIRES (JAWAC)' : 'COMPTE RENDU DE POLYGRAPHIE VENTILATOIRE NOCTURNE');
@@ -2488,12 +2542,11 @@ function slReport(R){
   if (ck('sl_x_opio')) L.push('- Traitement opioïde au long cours.');
   L.push('', 'RÉSULTATS');
   const rec = [];
-  if (v('sl_hdeb') || v('sl_hfin')) rec.push(`analyse de ${v('sl_hdeb') || '?'} à ${v('sl_hfin') || '?'}`);
-  if (N('duree') != null) rec.push(`durée d'enregistrement ${hm(N('duree'))}`);
-  if (N('dval') != null) rec.push(`signal valide ${hm(N('dval'))}`);
-  if (N('tst') != null) rec.push(`${isJ ? 'temps de sommeil estimé' : 'temps total de sommeil'} ${hm(N('tst'))}`);
-  if (rec.length) L.push('- Enregistrement : ' + rec.join(', ') + '.');
-  L.push(`- Qualité technique : ${({bonne:'bonne',moyenne:'moyenne (pertes de signal partielles)',mauvaise:'mauvaise'})[v('sl_qual')]}${v('sl_com').trim() ? ' ; ' + v('sl_com').trim() : ''}.`);
+  if (N('duree') != null) rec.push(`enregistrement ${hm(N('duree'))}`);
+  if (!isPSG && N('dval') != null) rec.push(`durée validée ${hm(N('dval'))}`);
+  if ((isPSG || isJ) && N('tst') != null) rec.push(`${isJ ? 'temps de sommeil estimé' : 'temps total de sommeil'} ${hm(N('tst'))}`);
+  if (rec.length) L.push('- Durées : ' + rec.join(', ') + '.');
+  if (v('sl_qual') !== 'bonne' || v('sl_com').trim()) L.push(`- Qualité technique : ${({bonne:'bonne',moyenne:'moyenne (pertes de signal partielles)',mauvaise:'mauvaise'})[v('sl_qual')]}${v('sl_com').trim() ? ' ; ' + v('sl_com').trim() : ''}.`);
   if (isPSG){
     const a = []; if (N('eff') != null) a.push(`efficacité ${fmt(N('eff'),0)} %`); if (N('lend') != null) a.push(`latence d'endormissement ${fmt(N('lend'),0)} min`); if (N('lsp') != null) a.push(`latence du sommeil paradoxal ${fmt(N('lsp'),0)} min`); if (N('waso') != null) a.push(`éveil intra-sommeil ${fmt(N('waso'),0)} min`);
     const st = [['n1','N1'],['n2','N2'],['n3','N3'],['sp','SP']].filter(([k]) => N(k) != null).map(([k,l]) => `${l} ${fmt(N(k),0)} %`);
@@ -2503,13 +2556,17 @@ function slReport(R){
   }
   const ev = [];
   if (N('iah') != null) ev.push(`IAH ${fmt(N('iah'))}/h`);
-  if (N('rdi') != null) ev.push(`${isJ ? 'RDI' : 'index d\'évènements respiratoires'} ${fmt(N('rdi'))}/h`);
+  const pv = !isPSG && !isJ;
+  if (N('rdi') != null && !pv) ev.push(`${isJ ? 'RDI' : 'index d\'évènements respiratoires'} ${fmt(N('rdi'))}/h`);
   if (N('ia') != null) ev.push(`index d'apnées ${fmt(N('ia'))}/h`);
   const det = [['iao','obstructives'],['iac','centrales'],['iam','mixtes']].filter(([k]) => N(k) != null).map(([k,l]) => `${l} ${fmt(N(k))}/h`);
   if (det.length) ev.push('apnées ' + det.join(', '));
   if (N('ih') != null) ev.push(`index d'hypopnées ${fmt(N('ih'))}/h`);
   if (N('rera') != null) ev.push(`${isJ ? 'efforts respiratoires avec micro-éveil' : 'RERA'} ${fmt(N('rera'))}/h`);
-  if (ev.length) L.push(`- Évènements respiratoires (par ${R.base}) : ${ev.join(', ')}.${v('sl_crit') ? ` Hypopnées codées avec ${v('sl_crit') === '3' ? 'désaturation ≥ 3 % ou micro-éveil' : 'désaturation ≥ 4 %'}.` : ''}`);
+  if (ev.length) L.push(`- Évènements respiratoires (par ${R.base}) : ${ev.join(', ')}.${v('sl_crit') ? ` Hypopnées codées sur une baisse du débit avec ${v('sl_crit') === '3' ? (isPSG ? 'désaturation ≥ 3 % ou micro-éveil' : 'désaturation ≥ 3 %') : 'désaturation ≥ 4 %'}.` : ''}`);
+  if (pv && N('iind') != null) L.push(`- Indicateurs non corticaux d'éveil (indicateurs autonomes) : index ${fmt(N('iind'))}/h.`);
+  if (pv && N('rdi') != null) L.push(`- Index d'évènements respiratoires (apnées, hypopnées et baisses de débit suivies d'un indicateur autonome) : ${fmt(N('rdi'))}/h.`);
+  if (pv && N('flim') != null) L.push(`- Limitation de débit inspiratoire : ${fmt(N('flim'),0)} % de la durée validée.`);
   if (isJ && N('effort') != null) L.push(`- Temps en effort respiratoire : ${fmt(N('effort'),0)} %.`);
   if (N('csr') != null) L.push(`- Respiration de Cheyne-Stokes : ${fmt(N('csr'),0)} % du temps.`);
   const po = []; if (N('pdos') != null) po.push(`décubitus dorsal ${fmt(N('pdos'),0)} % du temps`); if (N('idos') != null) po.push(`IAH dorsal ${fmt(N('idos'))}/h`); if (N('indos') != null) po.push(`IAH hors décubitus dorsal ${fmt(N('indos'))}/h`);
@@ -2520,8 +2577,9 @@ function slReport(R){
   if (ox.length) L.push('- Oxymétrie : ' + ox.join(', ') + '.');
   if (N('ronfl') != null) L.push(`- Ronflement : ${fmt(N('ronfl'),0)} % du temps.`);
   if (N('fc') != null) L.push(`- Fréquence cardiaque moyenne : ${fmt(N('fc'),0)} /min.`);
+  const nar = slNarr(R); if (nar.length){ L.push('', 'INTERPRÉTATION'); nar.forEach((t, i) => { if (i) L.push(''); L.push(t); }); }
   L.push('', 'CONCLUSION');
-  const iah = R.iah, b = R.base.replace('heure', 'h');
+  const iah = R.iah, b = isPSG ? 'h de sommeil' : isJ ? 'h de sommeil estimé' : 'h';
   if (iah == null) L.push('- (IAH à renseigner)');
   else if (ctx !== 'diag') L.push(`- ${R.src} résiduel à ${fmt(iah)}/${b} : ${({ok:'traitement efficace',part:'réponse partielle',ko:'efficacité insuffisante'})[R.ctrl]}.`);
   else {
@@ -2529,14 +2587,16 @@ function slReport(R){
     else if (R.insuff && iah < T.sev1) L.push(`- Examen techniquement insuffisant ne permettant pas d'éliminer un syndrome d'apnées du sommeil (${R.src} ${fmt(iah)}/h).`);
     else if (iah < T.sev1) L.push(`- Absence de syndrome d'apnées-hypopnées du sommeil significatif (${R.src} ${fmt(iah)}/h).`);
     else if (R.central) L.push(`- Syndrome d'apnées du sommeil ${R.sev} à prédominance centrale (${R.src} ${fmt(iah)}/${b}).`);
-    else L.push(`- Syndrome d'apnées-hypopnées obstructives du sommeil ${R.sev} (${R.src} ${fmt(iah)}/${b})${N('iac') != null && N('iac') >= T.ctrIdx ? ', avec composante centrale' : ''}${R.pos ? ', à composante positionnelle' + (R.posX ? ' exclusive' : '') : ''}${R.rem ? ', prédominant en sommeil paradoxal' : ''}.`);
+    else L.push(`- Syndrome d'apnées-hypopnées obstructives du sommeil ${R.sev} (${R.src} ${fmt(iah)}/${b})${N('iac') != null && N('iac') >= T.ctrIdx ? ', avec composante centrale' : ''}${R.pos ? ', à composante positionnelle' + (R.posX ? ' exclusive' : '') : (N('idos') != null && N('indos') != null ? ', non positionnel' : '')}${R.rem ? ', prédominant en sommeil paradoxal' : ''}.`);
     if (N('csr')) L.push(`- Respiration de Cheyne-Stokes (${fmt(N('csr'),0)} % du temps).`);
     if (R.hyp) L.push(`- Hypoxémie nocturne ${R.hyp === 'sev' ? 'sévère' : 'significative'} (T90 ${fmt(N('t90'))} %).`);
     if (isPSG && N('plmi') > T.plmi) L.push(`- Mouvements périodiques des jambes au cours du sommeil (${fmt(N('plmi'))}/h).`);
   }
   if (R.P.length){ L.push('', 'PROPOSITIONS'); R.P.forEach(p => L.push('- ' + p)); }
-  if (isJ) L.push('', 'Indices calculés par l\'analyse automatique des mouvements mandibulaires (Jawac), rapportés au temps de sommeil estimé.');
-  else if (!isPSG) L.push('', 'En polygraphie, l\'IAH est rapporté à la durée d\'enregistrement et peut sous-estimer la sévérité.');
+  const dn = v('sl_devnote').trim();
+  if (isJ) L.push('', 'Indices calculés par l\'analyse automatique des mouvements mandibulaires (Jawac), rapportés au temps de sommeil estimé.' + (dn ? ' ' + dn : ''));
+  else if (!isPSG) L.push('', 'Note technique : index rapportés à la durée validée, après exclusion des périodes d\'éveil et des signaux inexploitables. Le temps de sommeil et les micro-éveils corticaux ne sont pas mesurables en polygraphie.' + (dn ? ' ' + dn : ''));
+  else if (dn) L.push('', 'Note technique : ' + dn);
   return L.join('\n');
 }
 function slUpdate(force){
@@ -2698,7 +2758,8 @@ function channels(rec){
     spo2:   pick(s, [/spo2|sao2|satur/i]),
     effort: pick(s, [/effort|thorax|thoracique|abdo|ceinture|belt|rip/i]),
     snore:  pick(s, [/snore intensity|ronfl|snore|son/i]),
-    pulse:  pick(s, [/pulse|pouls|\bhr\b|fr[ée]q.*card/i]),
+    pulse:  pick(s, [/pulse|pouls|\bhr\b|fr[ée]q.*card/i], /pouls|pulse rate|\bhr\b|fr[ée]q/i),
+    pleth:  pick(s, [/pleth|ppg|photopl|onde de pouls/i]),
   };
 }
 // ---------------------------------------------------------------- classes d'annotations
@@ -2717,6 +2778,7 @@ function annClass(t){
   if (/apn/.test(x)) return 'A';
   if (/desat/.test(x)) return 'DES';
   if (/snore|ronfl/.test(x)) return 'SN';
+  if (/indicat|autonom|\bptt\b/.test(x)) return 'IND';
   if (/arousal|micro.?[ée]veil/.test(x)) return 'AR';
   if (/limb|jambe|plm/.test(x)) return 'LM';
   if (/supine|dorsal|\bdos\b/.test(x)) return 'P_dos';
@@ -2731,7 +2793,7 @@ const AH = new Set(['A','AO','AC','AM','H','HC']);
 
 // ---------------------------------------------------------------- analyse
 function analyse(rec, opt){
-  opt = Object.assign({ qMin:0.3, child:false, flatRef:0.05, hypo:0.70, apnea:0.10, minDur:10, desat:3, desatMin:3, desatWin:60, maxEv:120, flatFrac:0.08, flatMin:120, useValidated:false, sqrt:true, basePct:90, arousal:'auto', arWin:5 }, opt || {});
+  opt = Object.assign({ qMin:0.3, child:false, flatRef:0.05, hypo:0.70, apnea:0.10, minDur:10, desat:3, desatMin:3, desatWin:60, maxEv:120, flatFrac:0.08, flatMin:120, useValidated:false, sqrt:true, basePct:90, arousal:'auto', arWin:5, wakeAct:10, wakeGap:120, spo2Margin:5, indRise:5, indWin:15, plethDrop:0.3, flatIdx:0.65 }, opt || {});
   const H = rec.header, ch = channels(rec), warn = [];
   if (!ch.flow) throw new Error('voie de débit non trouvée');
   const N = Math.floor(H.duration * FS);
@@ -2758,6 +2820,9 @@ function analyse(rec, opt){
     const x = toRate(s.data, s.fs, FS);
     for (let i = 0; i < Math.min(N, x.length); i++){ let v = x[i]; if (quant) v = Math.ceil(v - 1e-6); spo2[i] = (v < 50 || v > 100) ? NaN : v; }
     for (let i = 1; i < N; i++) if (isFinite(spo2[i]) && isFinite(spo2[i-1]) && Math.abs(spo2[i] - spo2[i-1]) > 4) spo2[i] = NaN;
+    // marge de sécurité autour de chaque perte du signal d'oxymétrie (artéfact de reprise)
+    { const bad = new Uint8Array(N), m = Math.round(opt.spo2Margin*FS); for (let i = 0; i < N; i++) bad[i] = isFinite(spo2[i]) ? 0 : 1;
+      for (let i = 0; i < N; i++) if (bad[i] && ((i > 0 && !bad[i-1]) || (i + 1 < N && !bad[i+1]))) for (let j = Math.max(0, i - m); j <= Math.min(N - 1, i + m); j++) spo2[j] = NaN; }
   } else warn.push('Pas de voie SpO2 : les hypopnées ne peuvent pas être validées.');
   // ---- débit : canule (pression nasale) puis somme RIP (capteur de substitution AASM) quand la canule est inexploitable
   const alive = sg => { const v = new Set(); for (let i = 0; i < sg.data.length && v.size < 50; i += 13) v.add(sg.data[i]); return v.size >= 50; };
@@ -2772,10 +2837,24 @@ function analyse(rec, opt){
     const w = Math.round(envWin * 32); const M = movExt(x, w, true), m = movExt(x, w, false); const e = new Float32Array(x.length); for (let i = 0; i < x.length; i++) e[i] = M[i] - m[i];
     const out = new Float32Array(N); const e4 = blockMean(e, 8); out.set(e4.subarray(0, Math.min(N, e4.length))); return out; }
   const env1 = envOf(ch.flow), env2 = alt ? envOf(alt) : null;
-  // ---- mouvements (actimétrie) : époques de 30 s avec > 50 % du temps en mouvement
-  const MOV = new Uint8Array(N);
-  const act = rec.signals.find(sg => /actim|activit|movement|mouvement/i.test(sg.label));
-  if (act){ const a4 = toRate(act.data, act.fs, FS); for (let e0 = 0; e0 < N; e0 += 30*FS){ let m = 0, n = 0; for (let i = e0; i < Math.min(N, e0 + 30*FS); i++){ n++; if (a4[i] > 0.5) m++; } if (n && m / n > 0.5) for (let i = e0; i < Math.min(N, e0 + 30*FS); i++) MOV[i] = 1; } }
+  // ---- éveil (sans EEG) par époques de 30 s : lumière allumée ≥ 10 s, position debout,
+  //      ou mouvements ≥ wakeAct s sur 2 époques consécutives ; épisodes séparés de < wakeGap s fusionnés
+  const MOV = new Uint8Array(N), WK = { act:false, light:false, pos:false };
+  { const E30 = 30*FS, ne = Math.ceil(N / E30), w = new Uint8Array(ne), mv = new Float32Array(ne);
+    const act = rec.signals.find(sg => /actim|activit|movement|mouvement/i.test(sg.label));
+    if (act){ WK.act = true; const a4 = toRate(act.data, act.fs, FS); const smp = []; for (let i = 0; i < a4.length; i += 7) smp.push(a4[i]);
+      const p50 = pct(smp, 50), p99 = pct(smp, 99.5), thr = p99 <= 1.5 ? 0.5 : p50 + 0.25*(p99 - p50);
+      for (let i = 0; i < Math.min(N, a4.length); i++) if (a4[i] > thr) mv[Math.floor(i / E30)] += 1/FS;
+      for (let e = 0; e < ne; e++) if (mv[e] >= opt.wakeAct && ((e > 0 && mv[e-1] >= opt.wakeAct) || (e + 1 < ne && mv[e+1] >= opt.wakeAct))) w[e] = 1; }
+    const li = rec.signals.find(sg => /lumi|light|\bldr\b|\blux\b/i.test(sg.label));
+    if (li){ WK.light = true; const l4 = toRate(li.data, li.fs, FS); const smp = []; for (let i = 0; i < l4.length; i += 7) smp.push(l4[i]);
+      const p20 = pct(smp, 20), p99 = pct(smp, 99), thr = p20 + Math.max(0.08*(p99 - p20), 1e-6); const ls = new Float32Array(ne);
+      if (p99 > p20) for (let i = 0; i < Math.min(N, l4.length); i++) if (l4[i] > thr) ls[Math.floor(i / E30)] += 1/FS;
+      for (let e = 0; e < ne; e++) if (ls[e] >= 10) w[e] = 1; }
+    for (const a of ann) if (a.cls === 'P_debout'){ WK.pos = true; for (let e = Math.floor(a.onset*FS / E30); e <= Math.min(ne - 1, Math.floor((a.onset + Math.max(a.dur, 1))*FS / E30)); e++) w[e] = 1; }
+    let last = -1, gap = Math.round(opt.wakeGap / 30);
+    for (let e = 0; e < ne; e++) if (w[e]){ if (last >= 0 && e - last > 1 && e - last <= gap + 1) for (let k = last + 1; k < e; k++) w[k] = 1; last = e; }
+    for (let e = 0; e < ne; e++) if (w[e]) for (let i = e*E30; i < Math.min(N, (e+1)*E30); i++) MOV[i] = 1; }
   // ---- voies plates (capteur absent) : enveloppe < 5 % du 90e percentile pendant ≥ 2 min
   const flatOf = (e) => { const meds = []; for (let t = 0; t + 1800*FS <= N; t += 1800*FS){ const v = []; for (let i = t; i < t + 1800*FS; i += 4) if (!ch.spo2 || isFinite(spo2[i])) v.push(e[i]); if (v.length > 100) meds.push(pct(v, 50)); } const p = Math.max(meds.length ? pct(meds, 90) : pct(e, 90), 1e-6); const m = new Uint8Array(N); for (let i = 0; i < N; i++) m[i] = e[i] < opt.flatRef * p ? 1 : 0; const o = new Uint8Array(N); for (const [a, b] of runs(m, opt.flatMin*FS)) for (let i = Math.max(0, a - 5*FS); i < Math.min(N, b + 5*FS); i++) o[i] = 1; return o; };
   // qualité respiratoire : pic d'autocorrélation (période 1,5–8 s) par époque de 30 s, médiane sur 5 époques
@@ -2834,6 +2913,40 @@ function analyse(rec, opt){
       }
     } }
   const hasDesat = (o, d) => DS.some(q => q.t >= o - 2 && q.t <= o + d + 30);
+  // ---- indicateurs non corticaux d'éveil : accélération du pouls ≥ indRise /min (sur ≥ 3 s) par rapport aux 10 s précédentes
+  const IND = [];
+  if (ch.pulse){ const hr = toRate(ch.pulse.data, ch.pulse.fs, FS); const okh = x => isFinite(x) && x > 25 && x < 220; let last = -1e9;
+    for (let i = 12*FS; i < N - 10*FS; i += 2){
+      if (!A[i] || i - last < opt.indWin*FS) continue;
+      const b = []; for (let j = i - 12*FS; j < i - 2*FS; j++) if (okh(hr[j])) b.push(hr[j]); if (b.length < 6*FS) continue;
+      const base = pct(b, 50); let up = 0, bad = false; for (let j = i; j < i + 10*FS; j++){ if (!okh(hr[j])) { bad = true; break; } if (hr[j] >= base + opt.indRise) up++; }
+      if (!bad && up >= 3*FS && hr[i] >= base + opt.indRise){ IND.push(i / FS); last = i; } } }
+  // baisse d'amplitude de l'onde de pouls (vasoconstriction) ≥ plethDrop sur ≥ 3 s par rapport aux 10 s précédentes
+  if (ch.pleth){ const R16 = 16; let x = toRate(ch.pleth.data, ch.pleth.fs, R16); const M = movExt(x, 2*R16, true), m = movExt(x, 2*R16, false); const am = new Float32Array(N);
+    for (let i = 0; i < N; i++){ let s = 0, n = 0; for (let k = i*4; k < Math.min(x.length, i*4 + 4); k++){ s += M[k] - m[k]; n++; } am[i] = n ? s / n : NaN; }
+    let last = -1e9; const pl = [];
+    for (let i = 12*FS; i < N - 10*FS; i += 2){
+      if (!A[i] || i - last < opt.indWin*FS) continue;
+      const b = []; for (let j = i - 12*FS; j < i - 2*FS; j++) if (am[j] > 0) b.push(am[j]); if (b.length < 6*FS) continue;
+      const base = pct(b, 50); if (!(base > 0)) continue; let dn = 0; for (let j = i; j < i + 10*FS; j++) if (am[j] <= (1 - opt.plethDrop) * base) dn++;
+      if (dn >= 3*FS && am[i] <= (1 - opt.plethDrop) * base){ pl.push(i / FS); last = i; } }
+    let hA = 0; for (let i = 0; i < N; i++) if (A[i]) hA++; hA /= FS*3600;
+    if (hA > 0 && pl.length / hA > 60) warn.push('Onde de pouls trop instable pour détecter les baisses d’amplitude : indicateurs autonomes limités au pouls.');
+    else for (const t of pl) if (!IND.some(u => Math.abs(u - t) < opt.indWin)) IND.push(t);
+    IND.sort((a, b) => a - b); }
+  const hasInd = (o, d) => IND.some(t => t >= o - 2 && t <= o + d + opt.indWin);
+  // ---- limitation du débit inspiratoire : plateau inspiratoire aplati (pression nasale) sur ≥ 3 cycles consécutifs
+  const FLIM = new Uint8Array(N);
+  { const RR = 32, sg = ch.flow; let x = toRate(sg.data, sg.fs, RR); x = movMean(x, 5); const bl = movMean(x, 10*RR); for (let i = 0; i < x.length; i++) x[i] -= bl[i];
+    let lp = 0, ln = 0, np = 0, nn = 0, st = 0;   // polarité : l'inspiration est le lobe le plus court (Ti < Te)
+    for (let i = 1; i < x.length; i++) if ((x[i] >= 0) !== (x[i-1] >= 0)){ const L = i - st; if (L >= 0.3*RR && L <= 6*RR){ if (x[i-1] >= 0){ lp += L; np++; } else { ln += L; nn++; } } st = i; }
+    const sgn = (np && nn && lp/np > ln/nn) ? -1 : 1, br = []; st = -1;
+    for (let i = 1; i < x.length; i++){ const p0 = sgn*x[i-1] > 0, p1 = sgn*x[i] > 0;
+      if (p1 && !p0) st = i;
+      else if (!p1 && p0 && st >= 0){ const L = i - st; if (L >= 0.5*RR && L <= 4*RR){ let mx = 0, s = 0; for (let k = st; k < i; k++){ const v = sgn*x[k]; s += v; if (v > mx) mx = v; } br.push({ a: st, b: i, f: mx > 0 ? s / L / mx : 0, mx }); } st = -1; } }
+    const mmx = br.length ? pct(br.map(q => q.mx), 50) : 1, k8 = RR / FS;
+    for (let k = 0; k + 2 < br.length; k++){ const g = [br[k], br[k+1], br[k+2]];
+      if (g.every(q => q.f >= opt.flatIdx && q.mx >= 0.2*mmx) && g[2].a - g[0].b < 15*RR){ for (let i = Math.floor(g[0].a / k8); i < Math.min(N, Math.ceil(g[2].b / k8)); i++) FLIM[i] = 1; } } }
   const AR = ann.filter(a => a.cls === 'AR');
   const useAr = opt.arousal === true || (opt.arousal === 'auto' && AR.length > 0);
   const hasAr = (o, d) => useAr && AR.some(a => a.onset >= o && a.onset <= o + d + opt.arWin);
@@ -2859,7 +2972,7 @@ function analyse(rec, opt){
       if (effEnvs.length) type = effRatio(a, b) > 0.3 ? 'AO' : 'AC';
       if (opt.child && type === 'AC' && d < 20 && !hasDesat(o, d) && !hasAr(o, d)){ EV.push({ t:o, d, type:'R', rmin, sen: SEN[a] }); continue; }
       EV.push({ t:o, d, type, rmin, desat: hasDesat(o, d), sen: SEN[a] });
-    } else { const ds = hasDesat(o, d), ar = !ds && hasAr(o, d); EV.push({ t:o, d, type: ds || ar ? 'H' : 'R', rmin, ar, sen: SEN[a] }); }
+    } else { const ds = hasDesat(o, d), ar = !ds && hasAr(o, d); EV.push({ t:o, d, type: ds || ar ? 'H' : 'R', rmin, ar, ind: hasInd(o, d), sen: SEN[a] }); }
   }
   // ---- évènements Cidelec
   const inA = t => { const i = Math.floor(t*FS); return i >= 0 && i < N && A[i]; };
@@ -2908,6 +3021,14 @@ function analyse(rec, opt){
   if (cidVal){ let hS = 0; for (let i = 0; i < N; i++) if (A[i] && VC[i]) hS++; hS = hS / FS / 3600; const inS = e => { const i = Math.floor(e.t*FS); return VC[i] && A[i]; };
     const ap = EV.filter(e => inS(e) && ['A','AO','AC','AM'].includes(e.type)).length, hy = EV.filter(e => inS(e) && e.type === 'H').length, ce = EV.filter(e => inS(e) && e.type === 'AC').length;
     K.dev = { hours: hS, iah: (ap + hy) / hS, oahi: (ap - ce + hy) / hS, apnees: ap, hypopnees: hy, centrales: ce, horsSommeil: EV.filter(e => ['A','AO','AC','AM','H'].includes(e.type) && !VC[Math.floor(e.t*FS)]).length }; }
+  { const inA2 = t => { const i = Math.floor(t*FS); return i >= 0 && i < N && A[i]; };
+    const ah = EV.filter(e => ['A','AO','AC','AM','H'].includes(e.type));
+    K.ind = IND.filter(inA2).length; K.iind = K.ind / hours; K.hasPulse = !!(ch.pulse || ch.pleth);
+    K.ahInd = ah.filter(e => hasInd(e.t, e.d)).length; K.pAhInd = ah.length ? K.ahInd / ah.length : null;
+    K.devInd = ann.filter(a => a.cls === 'IND' && inA2(a.onset)).length; K.idevInd = K.devInd ? K.devInd / hours : null;
+    K.redInd = EV.filter(e => e.type === 'R' && e.ind).length; K.iredInd = K.redInd / hours;
+    K.ier = (K.apnees + K.hypopnees + K.redInd) / hours;
+    let fl = 0, fn = 0; for (let i = 0; i < N; i++) if (A[i] && SEN[i] === 1){ fn++; if (FLIM[i]) fl++; } K.flim = fn ? 100 * fl / fn : null; }
   let ripH = 0; for (let i = 0; i < N; i++) if (A[i] && SEN[i] === 2) ripH++; K.hoursRIP = ripH / FS / 3600; K.ia = K.apnees / hours; K.ih = K.hypopnees / hours; K.ido = K.desat / hours; K.ir = K.reductions / hours;
   // ---- oxymétrie
   let sum = 0, n = 0, mn2 = 101, below = 0; for (let i = 0; i < N; i++) if (A[i] && isFinite(spo2[i])){ sum += spo2[i]; n++; mn2 = Math.min(mn2, spo2[i]); if (spo2[i] < 90) below++; }
@@ -2958,7 +3079,7 @@ function analyse(rec, opt){
   const hoursVC = VC.reduce((s, v) => s + v, 0) / FS / 3600;
   let both = 0, onlyMine = 0, onlyC = 0; for (let i = 0; i < N; i++){ if (A[i] && VC[i]) both++; else if (A[i]) onlyMine++; else if (VC[i] && !FL[i]) onlyC++; }
   const VCMP = { win: WIN, cidVal, hoursVC, both: both/FS/3600, onlyMine: onlyMine/FS/3600, onlyC: onlyC/FS/3600 };
-  return { envWin, periods, breathRate, SEN, alt: alt ? alt.label : null, CV, SENS, rP, H, ch, opt, useAr, VC, VCMP, MOV, effSrc: effSrc.map(s => s.label), N, FS, V, A, FL, env, r, spo2, quant, DS, EV, ann, C, K, OX, POS, D, hours, hoursV, hasVal, flat, warn, cInFlat, cInInvalid, cResp };
+  return { hoursTot: H.duration / 3600, WK, IND, FLIM, envWin, periods, breathRate, SEN, alt: alt ? alt.label : null, CV, SENS, rP, H, ch, opt, useAr, VC, VCMP, MOV, effSrc: effSrc.map(s => s.label), N, FS, V, A, FL, env, r, spo2, quant, DS, EV, ann, C, K, OX, POS, D, hours, hoursV, hasVal, flat, warn, cInFlat, cInInvalid, cResp };
 }
 // ---------------------------------------------------------------- marquages Nomics (.mk3) → annotations
 function parseMK3(text, H){
@@ -3175,7 +3296,7 @@ function flags(){
   const P = R.POS;
   if (P.minDos != null){ const tot = P.minDos + P.minNonDos;
     if (tot && P.minNonDos < 0.1*tot) F.push(['warn', `Décubitus dorsal ${Math.round(100*P.minDos/tot)} % du temps analysé : composante positionnelle non évaluable.`]);
-    else if (tot && P.minDos < 0.1*tot) F.push(['warn', P.minDos < 1 ? `Aucun temps en décubitus dorsal (${Object.entries(P).filter(([k]) => /^P_(ventre|gauche|droit|debout)$/.test(k)).map(([k,v]) => `${({P_ventre:'ventral',P_gauche:'latéral gauche',P_droit:'latéral droit',P_debout:'assis/debout'})[k]} ${Math.round(v)} min`).join(', ')}) : sévérité possiblement sous-estimée.` : `Décubitus dorsal ${Math.round(100*P.minDos/tot)} % seulement du temps analysé : sévérité possiblement sous-estimée.`]);
+    else if (tot && P.minDos < 0.1*tot) F.push(['warn', P.minDos < 1 ? `Aucun temps en décubitus dorsal (${Object.entries(P).filter(([k]) => /^P_(ventre|gauche|droit|debout)$/.test(k)).map(([k,v]) => `${({P_ventre:'ventral',P_gauche:'latéral gauche',P_droit:'latéral droit',P_debout:'assis/debout'})[k]} ${Math.round(v)} min`).join(', ')}) : sévérité possiblement sous-estimée.` : `Décubitus dorsal ${Math.round(100*P.minDos/tot)} % seulement du temps analysé${P.kNon != null && sevOf(P.kNon) === sevOf(K.iah) ? ` ; IAH hors dos (${f1(P.kNon)}/h) du même niveau que l'IAH global : sévérité non sous-estimée.` : ' : sévérité possiblement sous-estimée.'}`]);
     else if (P.kDos != null && P.kNon != null && P.kDos >= 2*Math.max(P.kNon, 0.1) && P.kDos >= 5) F.push(['ok', `SAHOS positionnel dans mon analyse : IAH ${f1(P.kDos)}/h sur le dos, ${f1(P.kNon)}/h hors dos${R.CV && R.CV.iDos != null ? ` (${DEV} : ${f1(R.CV.iDos)} / ${f1(R.CV.iNon)})` : ''}.`]); }
   if (R.quant) F.push(['ok', 'SpO2 enregistrée sur 8 bits dans l\'EDF : valeurs entières restituées.']);
   if (R.useAr) F.push(['ok', 'Polysomnographie : hypopnées validées par désaturation ≥ 3 % ou micro-éveil EEG (micro-éveils lus dans l\'export, non recotés).']);
@@ -3202,12 +3323,14 @@ function transfer(src){
   const C = R.CV || R.C, K = R.K, nf = x => x == null || !isFinite(x) ? '' : String(Math.round(x*10)/10).replace('.', ',');
   const set = (k, v) => { const e = $('sl_' + k); if (e && v !== '' && v != null){ e.value = v; e.classList.remove('auto'); e.classList.add('check'); } };
   document.querySelector(`input[name=sl_exam][value=${DEV === 'Nomics' ? 'pv_jawac' : 'pv_cidelec'}]`).checked = true;
-  set('dval', String(Math.round(R.hours*60)));
+  set('duree', String(Math.round(R.hoursTot*60))); set('dval', String(Math.round(R.hours*60)));
+  if (DEV !== 'Nomics'){ ['tst','hdeb','hfin'].forEach(k => { const e = $('sl_' + k); if (e) e.value = ''; }); }
+  if (src !== 'C'){ if (K.hasPulse){ set('iind', nf(K.iind)); set('rdi', nf(K.ier)); } set('flim', K.flim == null ? '' : String(Math.round(K.flim))); }
+  { const CC = R.CV || R.C, hh = R.CV ? R.CV.hours : R.hours; set('devnote', `${DEV} : IAH ${nf(CC.iah)}/h${R.CV ? `, calculé sur ${Math.floor(hh)} h ${String(Math.round(hh*60)%60).padStart(2,'0')} retenues par l'appareil` : ' sur les mêmes périodes'}${K.idevInd ? ` ; indicateurs autonomes ${nf(K.idevInd)}/h` : ''}.`); }
   if (src === 'C'){ set('iah', nf(C.iah)); set('ia', nf(C.ia)); set('ih', nf(C.ih)); set('iac', nf(C.centrales / R.hours)); set('odi', nf(C.ido)); }
-  else { set('iah', nf(K.iah)); set('ia', nf(K.ia)); set('ih', nf(K.ih)); set('iac', nf(K.centrales / R.hours)); set('odi', nf(K.ido)); set('crit', String(R.opt.desat)); }
+  else { set('iah', nf(K.iah)); set('ia', nf(K.ia)); set('ih', nf(K.ih)); if (R.effSrc.length) set('iac', nf(K.centrales / R.hours)); else ['iac','iao','iam'].forEach(k => { const e = $('sl_' + k); if (e) e.value = ''; }); set('odi', nf(K.ido)); set('crit', String(R.opt.desat)); }
   set('odic', '3'); set('smoy', nf(R.OX.moy)); set('smin', nf(R.OX.min)); set('t90', nf(R.OX.t90));
   if (R.POS.minDos != null){ const tot = R.POS.minDos + R.POS.minNonDos; if (tot) set('pdos', String(Math.round(100*R.POS.minDos/tot))); set('idos', nf(src === 'C' ? R.POS.cDos : R.POS.kDos)); set('indos', nf(src === 'C' ? R.POS.cNon : R.POS.kNon)); }
-  if (R.flat.length) { const c = $('sl_com'); if (c && !c.value) c.value = 'perte du signal de débit nasal exclue de l\'analyse'; }
   $('tab-sleep').dispatchEvent(new Event('input'));
   window.__mods.showTab('sleep');
 }

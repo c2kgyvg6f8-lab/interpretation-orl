@@ -1,0 +1,26 @@
+# A chaque modification du logiciel, recalcule version.txt (date + empreinte SHA-256).
+# Les postes installes comparent ce fichier au leur au demarrage et se mettent a jour.
+name: version
+on:
+  push:
+    branches: [main]
+    paths: ['Interpretation_ORL.html']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Calcul de la version
+        run: |
+          h=$(sha256sum Interpretation_ORL.html | cut -d' ' -f1)
+          old=$(cut -d' ' -f2 version.txt 2>/dev/null || true)
+          if [ "$h" = "$old" ]; then echo "inchangé"; exit 0; fi
+          echo "$(date -u +%Y.%m.%d-%H%M) $h" > version.txt
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add version.txt
+          git commit -m "version.txt : $(cut -d' ' -f1 version.txt)"
+          git push
